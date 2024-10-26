@@ -15,8 +15,8 @@ class GameMenu:
         cv2.setWindowProperty("Menu", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
         # Dapatkan ukuran layar
-        self.width = 1920  # Default fullscreen width
-        self.height = 1080  # Default fullscreen height
+        self.width = 3142 # Lebar layar fullscreen untuk MacBook Pro M1 2021
+        self.height = 1964  # Tinggi layar fullscreen untuk MacBook Pro M1 2021
 
         # Background dengan gradient
         self.menu_bg = self.create_gradient_background()
@@ -285,7 +285,7 @@ class FallingObjectGame:
         # Inisialisasi MediaPipe Hands
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
-            max_num_hands=1, min_detection_confidence=0.7, min_tracking_confidence=0.7
+            max_num_hands=2, min_detection_confidence=0.7, min_tracking_confidence=0.7
         )
         self.mp_draw = mp.solutions.drawing_utils
 
@@ -293,10 +293,8 @@ class FallingObjectGame:
         self.cap = cv2.VideoCapture(0)
 
         # Set fullscreen untuk game window
-        cv2.namedWindow("Hand Detection Game", cv2.WND_PROP_FULLSCREEN)
-        cv2.setWindowProperty(
-            "Hand Detection Game", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
-        )
+        cv2.namedWindow("Game", cv2.WND_PROP_FULLSCREEN)
+        cv2.setWindowProperty("Game", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
         # Setting ukuran layar ke fullscreen
         self.width = 1920  # Default fullscreen width
@@ -345,14 +343,27 @@ class FallingObjectGame:
                 self.game_over = True
         self.objects = new_objects
 
-    def check_collision(self, finger_x, finger_y):
-        for obj in self.objects[:]:
-            distance = np.sqrt((finger_x - obj["x"]) ** 2 + (finger_y - obj["y"]) ** 2)
-            if distance < obj["radius"]:
-                # Add particle effect on collision
-                self.create_particle_effect(obj["x"], obj["y"], obj["color"])
-                self.objects.remove(obj)
-                self.score += 1
+    def check_collision(self, left_fist, right_fist):
+        objects_to_remove = []
+        for obj in self.objects:
+            if left_fist:
+                left_distance = np.sqrt((left_fist[0] - obj["x"]) ** 2 + (left_fist[1] - obj["y"]) ** 2)
+                if left_distance < obj["radius"] + 20:  # Tambahkan toleransi untuk ukuran kepalan
+                    self.create_particle_effect(obj["x"], obj["y"], obj["color"])
+                    objects_to_remove.append(obj)
+                    self.score += 1
+                    continue
+            
+            if right_fist:
+                right_distance = np.sqrt((right_fist[0] - obj["x"]) ** 2 + (right_fist[1] - obj["y"]) ** 2)
+                if right_distance < obj["radius"] + 20:  # Tambahkan toleransi untuk ukuran kepalan
+                    self.create_particle_effect(obj["x"], obj["y"], obj["color"])
+                    objects_to_remove.append(obj)
+                    self.score += 1
+
+        # Hapus objek yang terkena pukulan
+        for obj in objects_to_remove:
+            self.objects.remove(obj)
 
     def create_particle_effect(self, x, y, color):
         # TODO: Implementasi efek partikel saat objek dihancurkan
@@ -421,6 +432,45 @@ class FallingObjectGame:
             2,
         )
 
+    def detect_fists(self, hand_landmarks):
+        if not hand_landmarks:
+            return None, None
+
+        left_fist = None
+        right_fist = None
+
+        for hand_lms in hand_landmarks:
+            # Hitung jarak antara ujung jari dan pangkal telapak tangan
+            thumb_tip = hand_lms.landmark[4]
+            index_tip = hand_lms.landmark[8]
+            middle_tip = hand_lms.landmark[12]
+            ring_tip = hand_lms.landmark[16]
+            pinky_tip = hand_lms.landmark[20]
+            wrist = hand_lms.landmark[0]
+
+            fingers_folded = all([
+                self.is_finger_folded(thumb_tip, wrist),
+                self.is_finger_folded(index_tip, wrist),
+                self.is_finger_folded(middle_tip, wrist),
+                self.is_finger_folded(ring_tip, wrist),
+                self.is_finger_folded(pinky_tip, wrist)
+            ])
+
+            if fingers_folded:
+                fist_x = int(wrist.x * self.width)
+                fist_y = int(wrist.y * self.height)
+                
+                # Tentukan apakah ini tangan kiri atau kanan
+                if wrist.x < 0.5:
+                    left_fist = (fist_x, fist_y)
+                else:
+                    right_fist = (fist_x, fist_y)
+
+        return left_fist, right_fist
+
+    def is_finger_folded(self, finger_tip, wrist):
+        return finger_tip.y > wrist.y
+
     def run(self):
         last_object_time = time.time()
 
@@ -445,7 +495,12 @@ class FallingObjectGame:
                 self.update_objects()
                 self.draw_objects(frame)
 
+                left_fist = None
+                right_fist = None
+
                 if results.multi_hand_landmarks:
+                    left_fist, right_fist = self.detect_fists(results.multi_hand_landmarks)
+                    
                     for hand_landmarks in results.multi_hand_landmarks:
                         # Draw hand landmarks with custom style
                         for connection in self.mp_hands.HAND_CONNECTIONS:
@@ -482,7 +537,13 @@ class FallingObjectGame:
                             )
                         cv2.circle(frame, (finger_x, finger_y), 5, (0, 0, 255), -1)
 
-                        self.check_collision(finger_x, finger_y)
+                    # Gambar kepalan tangan
+                    if left_fist:
+                        cv2.circle(frame, left_fist, 20, (0, 0, 255), -1)
+                    if right_fist:
+                        cv2.circle(frame, right_fist, 20, (255, 0, 0), -1)
+
+                    self.check_collision(left_fist, right_fist)
 
                 # Tampilkan score dengan efek glow
                 score_text = f"Score: {self.score}"
@@ -530,3 +591,4 @@ class FallingObjectGame:
 if __name__ == "__main__":
     menu = GameMenu()
     menu.show()
+
